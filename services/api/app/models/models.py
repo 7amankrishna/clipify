@@ -70,6 +70,22 @@ class ClipSuggestion(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
 
 
+class ClipEdit(Base):
+    __tablename__ = "clip_edits"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    project_id: Mapped[int] = mapped_column(ForeignKey("projects.id"), nullable=False, index=True)
+    asset_id: Mapped[int] = mapped_column(ForeignKey("media_assets.id"), nullable=False, index=True)
+    suggestion_id: Mapped[int | None] = mapped_column(ForeignKey("clip_suggestions.id"), unique=True)
+    start_seconds: Mapped[float] = mapped_column(Float, nullable=False)
+    end_seconds: Mapped[float] = mapped_column(Float, nullable=False)
+    aspect_ratio: Mapped[str] = mapped_column(String(8), default="9:16", nullable=False)
+    crop_mode: Mapped[str] = mapped_column(String(32), default="center", nullable=False)
+    manual_x: Mapped[float] = mapped_column(Float, default=50.0, nullable=False)
+    manual_y: Mapped[float] = mapped_column(Float, default=50.0, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+
 class AppSetting(Base):
     __tablename__ = "app_settings"
     key: Mapped[str] = mapped_column(String(128), primary_key=True)

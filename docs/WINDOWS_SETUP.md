@@ -1,4 +1,4 @@
-# Windows setup (Phases 1–4)
+# Windows setup (Phases 1–5)
 
 ## Prerequisites
 
@@ -47,6 +47,8 @@ Create a project from the dashboard, then import an MP4, MOV, MKV, or WebM video
 Use **Generate transcript** beneath an imported video to queue local transcription. The first run downloads the selected Whisper model; later runs reuse the cached model. The default `base` model supports automatic English/Hindi/Hinglish detection and uses Silero VAD filtering.
 
 After a transcript is complete, use **Find smart clips**. ClipForge scores candidate moments locally using the transcript, pause detection, speaking pace, and measured audio energy; each recommendation shows the reasons behind its score.
+
+Open a smart suggestion in the **Clip Workspace** to adjust its start/end time on a real decoded waveform, preview its crop, and select the target ratio. These clip edits save automatically; final rendered exports are added in Phase 6.
 
 ## Verification
 

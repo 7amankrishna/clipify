@@ -5,7 +5,7 @@ from fastapi.testclient import TestClient
 from app.main import app
 from app.core.media_tools import probe_video
 from app.db.session import SessionLocal
-from app.models import ProcessingJob, Transcript
+from app.models import ClipSuggestion, ProcessingJob, Transcript
 
 
 def test_create_import_reopen_and_delete_project(monkeypatch):
@@ -123,3 +123,25 @@ def test_clip_analysis_ranks_and_persists_non_overlapping_suggestions(monkeypatc
         assert suggestions[0]["reasons"]
         for earlier, later in zip(suggestions, suggestions[1:]):
             assert min(earlier["end_seconds"], later["end_seconds"]) - max(earlier["start_seconds"], later["start_seconds"]) < min(earlier["end_seconds"] - earlier["start_seconds"], later["end_seconds"] - later["start_seconds"]) * 0.56
+
+
+def test_clip_edit_persists_timeline_and_crop_settings(monkeypatch):
+    monkeypatch.setattr("app.api.routes.probe_video", lambda _: {"duration_seconds": 90.0, "width": 1920, "height": 1080, "fps": 30.0})
+    with TestClient(app) as client:
+        project_id = client.post("/api/v1/projects", json={"name": "Editor persistence"}).json()["id"]
+        asset = client.post(f"/api/v1/projects/{project_id}/media", files={"file": ("source.mp4", b"source", "video/mp4")}).json()["assets"][0]
+        database = SessionLocal()
+        analysis_job = ProcessingJob(project_id=project_id, job_type="clip_analysis", status="completed", progress=100, metadata_json={})
+        database.add(analysis_job)
+        database.commit(); database.refresh(analysis_job)
+        suggestion = ClipSuggestion(project_id=project_id, asset_id=asset["id"], analysis_job_id=analysis_job.id, start_seconds=10.0, end_seconds=35.0, score=82, transcript_text="A suggested section", title="Suggested section", reasons_json=["Hook language appears early"], metrics_json={})
+        database.add(suggestion); database.commit(); database.refresh(suggestion); database.close()
+        edit = client.post(f"/api/v1/projects/{project_id}/edits", json={"asset_id": asset["id"], "suggestion_id": suggestion.id})
+        assert edit.status_code == 201
+        assert edit.json()["start_seconds"] == 10.0
+        changed = client.patch(f"/api/v1/edits/{edit.json()['id']}", json={"start_seconds": 12.5, "end_seconds": 31.5, "aspect_ratio": "1:1", "crop_mode": "manual", "manual_x": 24, "manual_y": 72})
+        assert changed.status_code == 200
+        assert changed.json()["aspect_ratio"] == "1:1"
+        assert changed.json()["manual_x"] == 24
+        saved = client.get(f"/api/v1/projects/{project_id}/edits").json()[0]
+        assert saved["end_seconds"] == 31.5

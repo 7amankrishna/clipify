@@ -1,6 +1,6 @@
 # ClipForge Local
 
-Local-first desktop software for turning long-form video into short clips. This repository currently contains **Phases 1–4: foundation, import, transcription, and smart clip detection**.
+Local-first desktop software for turning long-form video into short clips. This repository currently contains **Phases 1–5: foundation, import, transcription, smart clip detection, and visual editing**.
 
 It ships a React/Vite/TypeScript desktop UI, a FastAPI + SQLite service, FFmpeg/FFprobe detection, Docker support for the API, a Tauri v2 shell configuration, and fully local project/video importing.
 
@@ -35,6 +35,15 @@ The selected Whisper model downloads once on first use and is cached by the work
 - Rank suggestions from 0–100 with a visible explanation and metrics for every pick.
 - Remove duplicate text and heavily overlapping clips before saving the top recommendations.
 - Run analysis in the background with genuine progress, cancellation, retries, and SQLite persistence.
+
+## Included in Phase 5
+
+- Open any smart suggestion as a saved clip edit.
+- Preview the original source alongside a visual selected-clip preview.
+- Decode a local waveform from the source audio and trim with start/end timeline sliders.
+- Follow the transcript while the video plays; click a line to seek both previews.
+- Choose 9:16, 1:1, or 16:9 framing and center, blurred-background, split-screen, or manual crop positioning.
+- Automatically persist every timeline and framing change to SQLite.
 
 ## Quick start
 

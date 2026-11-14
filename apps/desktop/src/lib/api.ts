@@ -72,6 +72,23 @@ export type ClipSuggestion = {
   created_at: string;
 };
 
+export type ClipEdit = {
+  id: number;
+  project_id: number;
+  asset_id: number;
+  suggestion_id: number | null;
+  start_seconds: number;
+  end_seconds: number;
+  aspect_ratio: "9:16" | "1:1" | "16:9";
+  crop_mode: "center" | "blurred" | "split" | "manual";
+  manual_x: number;
+  manual_y: number;
+  created_at: string;
+  updated_at: string;
+};
+
+export type Waveform = { asset_id: number; duration_seconds: number | null; peaks: number[] };
+
 const API_BASE = import.meta.env.VITE_API_URL ?? "http://127.0.0.1:8000/api/v1";
 
 export async function getHealth(): Promise<HealthResponse> {
@@ -108,4 +125,8 @@ export const projectApi = {
   retryJob: (jobId: number) => request<TranscriptionJob>(`/jobs/${jobId}/retry`, { method: "POST" }),
   startClipAnalysis: (projectId: number, assetId: number) => request<TranscriptionJob>(`/projects/${projectId}/clip-analysis`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ asset_id: assetId, min_duration_seconds: 15, max_duration_seconds: 60 }) }),
   suggestions: (projectId: number, assetId?: number) => request<ClipSuggestion[]>(`/projects/${projectId}/suggestions${assetId ? `?asset_id=${assetId}` : ""}`),
+  createEdit: (projectId: number, assetId: number, suggestionId: number) => request<ClipEdit>(`/projects/${projectId}/edits`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ asset_id: assetId, suggestion_id: suggestionId }) }),
+  updateEdit: (editId: number, patch: Partial<Pick<ClipEdit, "start_seconds" | "end_seconds" | "aspect_ratio" | "crop_mode" | "manual_x" | "manual_y">>) => request<ClipEdit>(`/edits/${editId}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(patch) }),
+  waveform: (assetId: number) => request<Waveform>(`/media/${assetId}/waveform?points=180`),
+  mediaStreamUrl: (assetId: number) => `${API_BASE}/media/${assetId}/stream`,
 };

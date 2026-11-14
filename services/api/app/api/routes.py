@@ -3,18 +3,21 @@ from uuid import uuid4
 import shutil
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
+from fastapi.responses import FileResponse
 from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.core.media_tools import MediaProbeError, media_tools_status, probe_video
 from app.db.session import get_db
-from app.models import ClipSuggestion, MediaAsset, ProcessingJob, Project, Transcript
+from app.models import ClipEdit, ClipSuggestion, MediaAsset, ProcessingJob, Project, Transcript
 from app.schemas.clips import ClipAnalysisCreate, ClipSuggestionResponse
+from app.schemas.editor import ClipEditCreate, ClipEditResponse, ClipEditUpdate, WaveformResponse
 from app.schemas.projects import DashboardResponse, ProjectCreate, ProjectResponse, ProjectUpdate
 from app.schemas.transcription import JobResponse, TranscriptResponse, TranscriptionCreate
 from app.services.transcription import request_cancel, serialize_job, serialize_transcript, submit
 from app.services.clip_detection import serialize_suggestion, submit as submit_clip_analysis
+from app.services.media_workspace import WaveformError, waveform_peaks
 
 router = APIRouter()
 ALLOWED_VIDEO_EXTENSIONS = {".mp4", ".mov", ".mkv", ".webm"}
@@ -43,6 +46,17 @@ def serialize_project(project: Project, assets: list[MediaAsset]) -> dict:
         "updated_at": project.updated_at,
         "assets": [serialize_asset(asset) for asset in assets],
     }
+
+
+def serialize_edit(edit: ClipEdit) -> dict:
+    return {"id": edit.id, "project_id": edit.project_id, "asset_id": edit.asset_id, "suggestion_id": edit.suggestion_id, "start_seconds": edit.start_seconds, "end_seconds": edit.end_seconds, "aspect_ratio": edit.aspect_ratio, "crop_mode": edit.crop_mode, "manual_x": edit.manual_x, "manual_y": edit.manual_y, "created_at": edit.created_at, "updated_at": edit.updated_at}
+
+
+def validate_clip_bounds(asset: MediaAsset, start: float, end: float) -> None:
+    if end <= start:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Clip end must be after its start.")
+    if asset.duration_seconds is not None and end > asset.duration_seconds + 0.1:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Clip end cannot be beyond the source-video duration.")
 
 
 def project_or_404(project_id: int, database: Session) -> Project:
@@ -120,6 +134,7 @@ def update_project(project_id: int, payload: ProjectUpdate, database: Session = 
 @router.delete("/projects/{project_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_project(project_id: int, database: Session = Depends(get_db)) -> None:
     project = project_or_404(project_id, database)
+    database.query(ClipEdit).filter(ClipEdit.project_id == project_id).delete()
     database.query(ClipSuggestion).filter(ClipSuggestion.project_id == project_id).delete()
     database.query(Transcript).filter(Transcript.project_id == project_id).delete()
     database.query(ProcessingJob).filter(ProcessingJob.project_id == project_id).delete()
@@ -233,6 +248,78 @@ def list_suggestions(project_id: int, asset_id: int | None = None, database: Ses
         query = query.where(ClipSuggestion.asset_id == asset_id)
     suggestions = list(database.scalars(query.order_by(ClipSuggestion.score.desc(), ClipSuggestion.created_at.desc())))
     return [serialize_suggestion(suggestion) for suggestion in suggestions]
+
+
+@router.get("/media/{asset_id}/stream")
+def stream_media(asset_id: int, database: Session = Depends(get_db)) -> FileResponse:
+    asset = database.get(MediaAsset, asset_id)
+    path = Path(asset.original_path) if asset else None
+    if not asset or not path or not path.is_file():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Local source video was not found.")
+    return FileResponse(path, media_type=f"video/{asset.media_type}", filename=path.name)
+
+
+@router.get("/media/{asset_id}/waveform", response_model=WaveformResponse)
+def get_waveform(asset_id: int, points: int = 180, database: Session = Depends(get_db)) -> dict:
+    asset = database.get(MediaAsset, asset_id)
+    path = Path(asset.original_path) if asset else None
+    if not asset or not path or not path.is_file():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Local source video was not found.")
+    try:
+        peaks = waveform_peaks(path, max(40, min(points, 400)))
+    except WaveformError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+    return {"asset_id": asset.id, "duration_seconds": asset.duration_seconds, "peaks": peaks}
+
+
+@router.post("/projects/{project_id}/edits", response_model=ClipEditResponse, status_code=status.HTTP_201_CREATED)
+def create_clip_edit(project_id: int, payload: ClipEditCreate, database: Session = Depends(get_db)) -> dict:
+    project_or_404(project_id, database)
+    asset = database.get(MediaAsset, payload.asset_id)
+    if not asset or asset.project_id != project_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Source video not found in this project.")
+    suggestion = database.get(ClipSuggestion, payload.suggestion_id) if payload.suggestion_id else None
+    if payload.suggestion_id and (not suggestion or suggestion.project_id != project_id or suggestion.asset_id != asset.id):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Suggestion not found for this source video.")
+    if suggestion:
+        existing = database.scalar(select(ClipEdit).where(ClipEdit.suggestion_id == suggestion.id))
+        if existing:
+            return serialize_edit(existing)
+    start = payload.start_seconds if payload.start_seconds is not None else (suggestion.start_seconds if suggestion else None)
+    end = payload.end_seconds if payload.end_seconds is not None else (suggestion.end_seconds if suggestion else None)
+    if start is None or end is None:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Start and end are required when creating a manual clip.")
+    validate_clip_bounds(asset, start, end)
+    edit = ClipEdit(project_id=project_id, asset_id=asset.id, suggestion_id=suggestion.id if suggestion else None, start_seconds=start, end_seconds=end, aspect_ratio=payload.aspect_ratio, crop_mode=payload.crop_mode)
+    database.add(edit)
+    database.commit()
+    database.refresh(edit)
+    return serialize_edit(edit)
+
+
+@router.get("/projects/{project_id}/edits", response_model=list[ClipEditResponse])
+def list_clip_edits(project_id: int, database: Session = Depends(get_db)) -> list[dict]:
+    project_or_404(project_id, database)
+    edits = list(database.scalars(select(ClipEdit).where(ClipEdit.project_id == project_id).order_by(ClipEdit.updated_at.desc())))
+    return [serialize_edit(edit) for edit in edits]
+
+
+@router.patch("/edits/{edit_id}", response_model=ClipEditResponse)
+def update_clip_edit(edit_id: int, payload: ClipEditUpdate, database: Session = Depends(get_db)) -> dict:
+    edit = database.get(ClipEdit, edit_id)
+    if not edit:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Clip edit not found.")
+    asset = database.get(MediaAsset, edit.asset_id)
+    next_start = payload.start_seconds if payload.start_seconds is not None else edit.start_seconds
+    next_end = payload.end_seconds if payload.end_seconds is not None else edit.end_seconds
+    validate_clip_bounds(asset, next_start, next_end)
+    for field in ("start_seconds", "end_seconds", "aspect_ratio", "crop_mode", "manual_x", "manual_y"):
+        value = getattr(payload, field)
+        if value is not None:
+            setattr(edit, field, value)
+    database.commit()
+    database.refresh(edit)
+    return serialize_edit(edit)
 
 
 @router.get("/jobs/{job_id}", response_model=JobResponse)
