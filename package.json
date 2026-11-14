@@ -1,0 +1,12 @@
+{
+  "name": "clipforge-local",
+  "private": true,
+  "version": "0.1.0",
+  "workspaces": ["apps/*"],
+  "scripts": {
+    "dev": "npm run dev --workspace=@clipforge/desktop",
+    "build": "npm run build --workspace=@clipforge/desktop",
+    "test": "npm run test --workspace=@clipforge/desktop",
+    "tauri": "npm run tauri --workspace=@clipforge/desktop"
+  }
+}

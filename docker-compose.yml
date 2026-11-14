@@ -1,0 +1,18 @@
+services:
+  api:
+    build:
+      context: ./services/api
+    env_file: .env
+    environment:
+      CLIPFORGE_HOST: 0.0.0.0
+      CLIPFORGE_PORT: 8000
+      CLIPFORGE_DATABASE_URL: sqlite:///./data/clipforge.db
+      CLIPFORGE_STORAGE_DIR: ./data
+    ports:
+      - "127.0.0.1:8000:8000"
+    volumes:
+      - clipforge-data:/app/data
+    restart: unless-stopped
+
+volumes:
+  clipforge-data:

@@ -1,0 +1,13 @@
+node_modules/
+dist/
+.vite/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+.env
+data/
+*.db
+*.sqlite3
+target/
+apps/desktop/src-tauri/gen/
