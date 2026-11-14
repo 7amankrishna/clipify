@@ -1,4 +1,4 @@
-# Windows setup (Phases 1–2)
+# Windows setup (Phases 1–3)
 
 ## Prerequisites
 
@@ -21,6 +21,12 @@ pip install -r services\api\requirements.txt
 npm install
 ```
 
+For local transcription, install the AI runtime as well:
+
+```powershell
+pip install -r services\api\requirements-ai.txt
+```
+
 Start the API in one PowerShell window:
 
 ```powershell
@@ -37,6 +43,8 @@ npm run dev
 Open `http://127.0.0.1:5173`. The three readiness cards confirm the real connection to FastAPI, SQLite, and FFmpeg tools.
 
 Create a project from the dashboard, then import an MP4, MOV, MKV, or WebM video. ClipForge copies it into its local `data/projects` storage and uses FFprobe to show its metadata.
+
+Use **Generate transcript** beneath an imported video to queue local transcription. The first run downloads the selected Whisper model; later runs reuse the cached model. The default `base` model supports automatic English/Hindi/Hinglish detection and uses Silero VAD filtering.
 
 ## Verification
 

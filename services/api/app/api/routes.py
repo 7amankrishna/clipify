@@ -9,8 +9,10 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.core.media_tools import MediaProbeError, media_tools_status, probe_video
 from app.db.session import get_db
-from app.models import MediaAsset, ProcessingJob, Project
+from app.models import MediaAsset, ProcessingJob, Project, Transcript
 from app.schemas.projects import DashboardResponse, ProjectCreate, ProjectResponse, ProjectUpdate
+from app.schemas.transcription import JobResponse, TranscriptResponse, TranscriptionCreate
+from app.services.transcription import request_cancel, serialize_job, serialize_transcript, submit
 
 router = APIRouter()
 ALLOWED_VIDEO_EXTENSIONS = {".mp4", ".mov", ".mkv", ".webm"}
@@ -116,6 +118,7 @@ def update_project(project_id: int, payload: ProjectUpdate, database: Session = 
 @router.delete("/projects/{project_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_project(project_id: int, database: Session = Depends(get_db)) -> None:
     project = project_or_404(project_id, database)
+    database.query(Transcript).filter(Transcript.project_id == project_id).delete()
     database.query(ProcessingJob).filter(ProcessingJob.project_id == project_id).delete()
     database.query(MediaAsset).filter(MediaAsset.project_id == project_id).delete()
     database.delete(project)
@@ -171,3 +174,70 @@ async def import_video(
     database.commit()
     database.refresh(project)
     return serialize_project(project, get_project_assets(project_id, database))
+
+
+@router.post("/projects/{project_id}/transcriptions", response_model=JobResponse, status_code=status.HTTP_202_ACCEPTED)
+def start_transcription(project_id: int, payload: TranscriptionCreate, database: Session = Depends(get_db)) -> dict:
+    project_or_404(project_id, database)
+    asset = database.get(MediaAsset, payload.asset_id)
+    if not asset or asset.project_id != project_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Source video not found in this project.")
+    job = ProcessingJob(
+        project_id=project_id,
+        job_type="transcription",
+        status="queued",
+        progress=0,
+        metadata_json={"asset_id": asset.id, "model": payload.model, "language": payload.language, "device": payload.device, "attempt": 1, "cancel_requested": False},
+    )
+    database.add(job)
+    database.commit()
+    database.refresh(job)
+    submit(job.id)
+    return serialize_job(job)
+
+
+@router.get("/projects/{project_id}/transcripts", response_model=list[TranscriptResponse])
+def list_transcripts(project_id: int, database: Session = Depends(get_db)) -> list[dict]:
+    project_or_404(project_id, database)
+    transcripts = list(database.scalars(select(Transcript).where(Transcript.project_id == project_id).order_by(Transcript.created_at.desc())))
+    return [serialize_transcript(transcript) for transcript in transcripts]
+
+
+@router.get("/jobs/{job_id}", response_model=JobResponse)
+def get_job(job_id: int, database: Session = Depends(get_db)) -> dict:
+    job = database.get(ProcessingJob, job_id)
+    if not job:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found.")
+    return serialize_job(job)
+
+
+@router.post("/jobs/{job_id}/cancel", response_model=JobResponse)
+def cancel_job(job_id: int, database: Session = Depends(get_db)) -> dict:
+    job = database.get(ProcessingJob, job_id)
+    if not job:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found.")
+    if job.status not in {"queued", "processing", "cancel_requested"}:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Only queued or running jobs can be cancelled.")
+    request_cancel(job.id)
+    database.refresh(job)
+    return serialize_job(job)
+
+
+@router.post("/jobs/{job_id}/retry", response_model=JobResponse, status_code=status.HTTP_202_ACCEPTED)
+def retry_job(job_id: int, database: Session = Depends(get_db)) -> dict:
+    job = database.get(ProcessingJob, job_id)
+    if not job:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found.")
+    if job.job_type != "transcription" or job.status not in {"failed", "cancelled"}:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Only failed or cancelled transcription jobs can be retried.")
+    metadata = dict(job.metadata_json or {})
+    metadata["attempt"] = int(metadata.get("attempt", 0)) + 1
+    metadata["cancel_requested"] = False
+    job.metadata_json = metadata
+    job.status = "queued"
+    job.progress = 0
+    job.error_message = None
+    database.commit()
+    database.refresh(job)
+    submit(job.id)
+    return serialize_job(job)
