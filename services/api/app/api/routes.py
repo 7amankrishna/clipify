@@ -1,5 +1,6 @@
 from pathlib import Path
 from uuid import uuid4
+import os
 import shutil
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
@@ -10,14 +11,16 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.core.media_tools import MediaProbeError, media_tools_status, probe_video
 from app.db.session import get_db
-from app.models import ClipEdit, ClipSuggestion, MediaAsset, ProcessingJob, Project, Transcript
+from app.models import CaptionTrack, ClipEdit, ClipSuggestion, MediaAsset, ProcessingJob, Project, Transcript, VideoExport
 from app.schemas.clips import ClipAnalysisCreate, ClipSuggestionResponse
 from app.schemas.editor import ClipEditCreate, ClipEditResponse, ClipEditUpdate, WaveformResponse
+from app.schemas.export import CaptionResponse, CaptionUpdate, ExportCreate, ExportResponse
 from app.schemas.projects import DashboardResponse, ProjectCreate, ProjectResponse, ProjectUpdate
 from app.schemas.transcription import JobResponse, TranscriptResponse, TranscriptionCreate
 from app.services.transcription import request_cancel, serialize_job, serialize_transcript, submit
 from app.services.clip_detection import serialize_suggestion, submit as submit_clip_analysis
 from app.services.media_workspace import WaveformError, waveform_peaks
+from app.services.rendering import serialize_caption, serialize_export, submit as submit_render
 
 router = APIRouter()
 ALLOWED_VIDEO_EXTENSIONS = {".mp4", ".mov", ".mkv", ".webm"}
@@ -57,6 +60,38 @@ def validate_clip_bounds(asset: MediaAsset, start: float, end: float) -> None:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Clip end must be after its start.")
     if asset.duration_seconds is not None and end > asset.duration_seconds + 0.1:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Clip end cannot be beyond the source-video duration.")
+
+
+def caption_words_for_edit(edit: ClipEdit, database: Session) -> list[dict]:
+    """Return editable, timestamped caption words for the clip's source transcript."""
+    transcript = database.scalar(
+        select(Transcript).where(Transcript.asset_id == edit.asset_id).order_by(Transcript.created_at.desc())
+    )
+    if not transcript:
+        return []
+    words: list[dict] = []
+    for segment in transcript.segments_json:
+        segment_words = segment.get("words") or []
+        if segment_words:
+            for item in segment_words:
+                start, end = float(item.get("start", 0)), float(item.get("end", 0))
+                if end > edit.start_seconds and start < edit.end_seconds and str(item.get("word", "")).strip():
+                    words.append({"word": str(item["word"]).strip(), "start": start, "end": max(end, start + 0.01), "line": 0})
+            continue
+        # Some transcription backends omit per-word data; preserve a usable caption fallback.
+        text_words = str(segment.get("text", "")).split()
+        start, end = float(segment.get("start", 0)), float(segment.get("end", 0))
+        if not text_words or end <= edit.start_seconds or start >= edit.end_seconds:
+            continue
+        span = max(0.01, (end - start) / len(text_words))
+        for index, word in enumerate(text_words):
+            word_start, word_end = start + index * span, start + (index + 1) * span
+            if word_end > edit.start_seconds and word_start < edit.end_seconds:
+                words.append({"word": word, "start": word_start, "end": word_end, "line": 0})
+    # Short grouped lines give readable mobile captions, while still retaining word timing.
+    for index, word in enumerate(words):
+        word["line"] = index // 5
+    return words
 
 
 def project_or_404(project_id: int, database: Session) -> Project:
@@ -134,6 +169,9 @@ def update_project(project_id: int, payload: ProjectUpdate, database: Session = 
 @router.delete("/projects/{project_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_project(project_id: int, database: Session = Depends(get_db)) -> None:
     project = project_or_404(project_id, database)
+    edit_ids = select(ClipEdit.id).where(ClipEdit.project_id == project_id)
+    database.query(VideoExport).filter(VideoExport.project_id == project_id).delete()
+    database.query(CaptionTrack).filter(CaptionTrack.clip_edit_id.in_(edit_ids)).delete(synchronize_session=False)
     database.query(ClipEdit).filter(ClipEdit.project_id == project_id).delete()
     database.query(ClipSuggestion).filter(ClipSuggestion.project_id == project_id).delete()
     database.query(Transcript).filter(Transcript.project_id == project_id).delete()
@@ -322,6 +360,93 @@ def update_clip_edit(edit_id: int, payload: ClipEditUpdate, database: Session = 
     return serialize_edit(edit)
 
 
+@router.get("/edits/{edit_id}/captions", response_model=CaptionResponse)
+def get_captions(edit_id: int, database: Session = Depends(get_db)) -> dict:
+    edit = database.get(ClipEdit, edit_id)
+    if not edit:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Clip edit not found.")
+    track = database.scalar(select(CaptionTrack).where(CaptionTrack.clip_edit_id == edit.id))
+    if not track:
+        track = CaptionTrack(clip_edit_id=edit.id, words_json=caption_words_for_edit(edit, database))
+        database.add(track)
+        database.commit()
+        database.refresh(track)
+    return serialize_caption(track)
+
+
+@router.patch("/edits/{edit_id}/captions", response_model=CaptionResponse)
+def update_captions(edit_id: int, payload: CaptionUpdate, database: Session = Depends(get_db)) -> dict:
+    edit = database.get(ClipEdit, edit_id)
+    if not edit:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Clip edit not found.")
+    track = database.scalar(select(CaptionTrack).where(CaptionTrack.clip_edit_id == edit.id))
+    if not track:
+        track = CaptionTrack(clip_edit_id=edit.id, words_json=caption_words_for_edit(edit, database))
+        database.add(track)
+    if payload.preset is not None:
+        track.preset = payload.preset
+    if payload.words is not None:
+        for word in payload.words:
+            if word.end <= word.start:
+                raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Each caption word must end after it starts.")
+        track.words_json = [word.model_dump() for word in payload.words]
+    database.commit()
+    database.refresh(track)
+    return serialize_caption(track)
+
+
+@router.post("/edits/{edit_id}/exports", response_model=ExportResponse, status_code=status.HTTP_202_ACCEPTED)
+def create_export(edit_id: int, payload: ExportCreate, database: Session = Depends(get_db)) -> dict:
+    edit = database.get(ClipEdit, edit_id)
+    if not edit:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Clip edit not found.")
+    track = database.scalar(select(CaptionTrack).where(CaptionTrack.clip_edit_id == edit.id))
+    if not track:
+        track = CaptionTrack(clip_edit_id=edit.id, words_json=caption_words_for_edit(edit, database))
+        database.add(track)
+        database.flush()
+    if not track.words_json:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="No transcript captions are available for this clip.")
+    job = ProcessingJob(project_id=edit.project_id, job_type="render_export", status="queued", progress=0, metadata_json={"clip_edit_id": edit.id, "preview": payload.preview, "attempt": 1, "cancel_requested": False})
+    database.add(job)
+    database.flush()
+    export = VideoExport(project_id=edit.project_id, clip_edit_id=edit.id, job_id=job.id, is_preview=payload.preview, status="queued")
+    database.add(export)
+    database.flush()
+    job.metadata_json = {**job.metadata_json, "export_id": export.id}
+    database.commit()
+    database.refresh(export)
+    submit_render(job.id)
+    return serialize_export(export)
+
+
+@router.get("/projects/{project_id}/exports", response_model=list[ExportResponse])
+def list_exports(project_id: int, database: Session = Depends(get_db)) -> list[dict]:
+    project_or_404(project_id, database)
+    exports = list(database.scalars(select(VideoExport).where(VideoExport.project_id == project_id).order_by(VideoExport.created_at.desc())))
+    return [serialize_export(item) for item in exports]
+
+
+@router.get("/exports/{export_id}/download")
+def download_export(export_id: int, database: Session = Depends(get_db)) -> FileResponse:
+    export = database.get(VideoExport, export_id)
+    path = Path(export.output_path) if export and export.output_path else None
+    if not export or export.status != "completed" or not path or not path.is_file():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Rendered video is not available.")
+    return FileResponse(path, media_type="video/mp4", filename=path.name)
+
+
+@router.post("/exports/{export_id}/open")
+def open_export(export_id: int, database: Session = Depends(get_db)) -> dict:
+    export = database.get(VideoExport, export_id)
+    path = Path(export.output_path) if export and export.output_path else None
+    if not export or export.status != "completed" or not path or not path.is_file():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Rendered video is not available.")
+    if os.name == "nt":
+        os.startfile(str(path))  # type: ignore[attr-defined]
+    return {"path": str(path)}
+
+
 @router.get("/jobs/{job_id}", response_model=JobResponse)
 def get_job(job_id: int, database: Session = Depends(get_db)) -> dict:
     job = database.get(ProcessingJob, job_id)
@@ -347,7 +472,7 @@ def retry_job(job_id: int, database: Session = Depends(get_db)) -> dict:
     job = database.get(ProcessingJob, job_id)
     if not job:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found.")
-    if job.job_type not in {"transcription", "clip_analysis"} or job.status not in {"failed", "cancelled"}:
+    if job.job_type not in {"transcription", "clip_analysis", "render_export"} or job.status not in {"failed", "cancelled"}:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Only failed or cancelled processing jobs can be retried.")
     metadata = dict(job.metadata_json or {})
     metadata["attempt"] = int(metadata.get("attempt", 0)) + 1
@@ -360,6 +485,13 @@ def retry_job(job_id: int, database: Session = Depends(get_db)) -> dict:
     database.refresh(job)
     if job.job_type == "transcription":
         submit(job.id)
-    else:
+    elif job.job_type == "clip_analysis":
         submit_clip_analysis(job.id)
+    else:
+        export = database.get(VideoExport, metadata.get("export_id"))
+        if export:
+            export.status = "queued"
+            export.error_message = None
+            database.commit()
+        submit_render(job.id)
     return serialize_job(job)

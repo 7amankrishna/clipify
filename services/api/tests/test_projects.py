@@ -2,6 +2,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
+from sqlalchemy import select
 from app.main import app
 from app.core.media_tools import probe_video
 from app.db.session import SessionLocal
@@ -145,3 +146,27 @@ def test_clip_edit_persists_timeline_and_crop_settings(monkeypatch):
         assert changed.json()["manual_x"] == 24
         saved = client.get(f"/api/v1/projects/{project_id}/edits").json()[0]
         assert saved["end_seconds"] == 31.5
+
+
+def test_caption_tracks_and_export_jobs_are_persisted(monkeypatch):
+    monkeypatch.setattr("app.api.routes.probe_video", lambda _: {"duration_seconds": 40.0, "width": 1920, "height": 1080, "fps": 30.0})
+    monkeypatch.setattr("app.api.routes.submit_render", lambda _: None)
+    with TestClient(app) as client:
+        project_id = client.post("/api/v1/projects", json={"name": "Caption export"}).json()["id"]
+        asset = client.post(f"/api/v1/projects/{project_id}/media", files={"file": ("source.mp4", b"source", "video/mp4")}).json()["assets"][0]
+        database = SessionLocal()
+        transcription_job = ProcessingJob(project_id=project_id, job_type="transcription", status="completed", progress=100, metadata_json={})
+        database.add(transcription_job); database.commit(); database.refresh(transcription_job)
+        database.add(Transcript(project_id=project_id, asset_id=asset["id"], job_id=transcription_job.id, language="en", language_probability=.99, transcript_path="/tmp/captions.json", segments_json=[{"start": 2.0, "end": 5.0, "text": "Make better videos today", "words": [{"word": "Make", "start": 2.0, "end": 2.5}, {"word": "better", "start": 2.5, "end": 3.2}, {"word": "videos", "start": 3.2, "end": 4.1}, {"word": "today", "start": 4.1, "end": 5.0}]}]))
+        database.add(ClipSuggestion(project_id=project_id, asset_id=asset["id"], analysis_job_id=transcription_job.id, start_seconds=2.0, end_seconds=5.0, score=90, transcript_text="Make better videos today", title="Make better videos", reasons_json=["Hook"], metrics_json={}))
+        database.commit(); suggestion = database.scalar(select(ClipSuggestion).where(ClipSuggestion.project_id == project_id)); database.close()
+        edit = client.post(f"/api/v1/projects/{project_id}/edits", json={"asset_id": asset["id"], "suggestion_id": suggestion.id}).json()
+        captions = client.get(f"/api/v1/edits/{edit['id']}/captions")
+        assert captions.status_code == 200
+        assert [word["word"] for word in captions.json()["words"]] == ["Make", "better", "videos", "today"]
+        updated = client.patch(f"/api/v1/edits/{edit['id']}/captions", json={"preset": "neon_creator", "words": captions.json()["words"]})
+        assert updated.json()["preset"] == "neon_creator"
+        queued = client.post(f"/api/v1/edits/{edit['id']}/exports", json={"preview": False})
+        assert queued.status_code == 202
+        assert queued.json()["status"] == "queued"
+        assert client.get(f"/api/v1/projects/{project_id}/exports").json()[0]["job_id"] == queued.json()["job_id"]

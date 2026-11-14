@@ -89,6 +89,10 @@ export type ClipEdit = {
 
 export type Waveform = { asset_id: number; duration_seconds: number | null; peaks: number[] };
 
+export type CaptionWord = { word: string; start: number; end: number; line: number };
+export type CaptionTrack = { id: number; clip_edit_id: number; preset: "bold_yellow" | "white_minimal" | "neon_creator"; words: CaptionWord[]; updated_at: string };
+export type VideoExport = { id: number; project_id: number; clip_edit_id: number; job_id: number; is_preview: boolean; status: string; output_path: string | null; error_message: string | null; created_at: string; updated_at: string };
+
 const API_BASE = import.meta.env.VITE_API_URL ?? "http://127.0.0.1:8000/api/v1";
 
 export async function getHealth(): Promise<HealthResponse> {
@@ -129,4 +133,10 @@ export const projectApi = {
   updateEdit: (editId: number, patch: Partial<Pick<ClipEdit, "start_seconds" | "end_seconds" | "aspect_ratio" | "crop_mode" | "manual_x" | "manual_y">>) => request<ClipEdit>(`/edits/${editId}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(patch) }),
   waveform: (assetId: number) => request<Waveform>(`/media/${assetId}/waveform?points=180`),
   mediaStreamUrl: (assetId: number) => `${API_BASE}/media/${assetId}/stream`,
+  captions: (editId: number) => request<CaptionTrack>(`/edits/${editId}/captions`),
+  updateCaptions: (editId: number, patch: Partial<Pick<CaptionTrack, "preset" | "words">>) => request<CaptionTrack>(`/edits/${editId}/captions`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(patch) }),
+  createExport: (editId: number, preview: boolean) => request<VideoExport>(`/edits/${editId}/exports`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ preview }) }),
+  exports: (projectId: number) => request<VideoExport[]>(`/projects/${projectId}/exports`),
+  downloadExportUrl: (exportId: number) => `${API_BASE}/exports/${exportId}/download`,
+  openExport: (exportId: number) => request<{ path: string }>(`/exports/${exportId}/open`, { method: "POST" }),
 };

@@ -1,4 +1,4 @@
-# Windows setup (Phases 1–5)
+# Windows setup (Phases 1–6)
 
 ## Prerequisites
 
@@ -48,7 +48,7 @@ Use **Generate transcript** beneath an imported video to queue local transcripti
 
 After a transcript is complete, use **Find smart clips**. ClipForge scores candidate moments locally using the transcript, pause detection, speaking pace, and measured audio energy; each recommendation shows the reasons behind its score.
 
-Open a smart suggestion in the **Clip Workspace** to adjust its start/end time on a real decoded waveform, preview its crop, and select the target ratio. These clip edits save automatically; final rendered exports are added in Phase 6.
+Open a smart suggestion in the **Clip Workspace** to adjust its start/end time on a real decoded waveform, preview its crop, and select the target ratio. Use the animated-caption editor to revise caption lines and select a preset. **Render preview** creates a smaller local MP4; **Export MP4** produces a H.264/AAC file (1080 × 1920 by default for 9:16) in `data/projects/<id>/exports/`. Progress, cancellation, retry, and completed downloads appear in the workspace.
 
 ## Verification
 

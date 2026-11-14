@@ -86,6 +86,30 @@ class ClipEdit(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
 
+class CaptionTrack(Base):
+    __tablename__ = "caption_tracks"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    clip_edit_id: Mapped[int] = mapped_column(ForeignKey("clip_edits.id"), nullable=False, unique=True)
+    preset: Mapped[str] = mapped_column(String(32), default="bold_yellow", nullable=False)
+    words_json: Mapped[list] = mapped_column(JSON, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+
+class VideoExport(Base):
+    __tablename__ = "video_exports"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    project_id: Mapped[int] = mapped_column(ForeignKey("projects.id"), nullable=False, index=True)
+    clip_edit_id: Mapped[int] = mapped_column(ForeignKey("clip_edits.id"), nullable=False, index=True)
+    job_id: Mapped[int] = mapped_column(ForeignKey("processing_jobs.id"), nullable=False, unique=True)
+    is_preview: Mapped[bool] = mapped_column(default=False, nullable=False)
+    status: Mapped[str] = mapped_column(String(32), default="queued", nullable=False)
+    output_path: Mapped[str | None] = mapped_column(Text)
+    error_message: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+
 class AppSetting(Base):
     __tablename__ = "app_settings"
     key: Mapped[str] = mapped_column(String(128), primary_key=True)
