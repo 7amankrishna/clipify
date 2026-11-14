@@ -1,6 +1,6 @@
 # ClipForge Local
 
-Local-first desktop software for turning long-form video into short clips. This repository currently contains **Phases 1–3: foundation, project/video import, and local transcription**.
+Local-first desktop software for turning long-form video into short clips. This repository currently contains **Phases 1–4: foundation, import, transcription, and smart clip detection**.
 
 It ships a React/Vite/TypeScript desktop UI, a FastAPI + SQLite service, FFmpeg/FFprobe detection, Docker support for the API, a Tauri v2 shell configuration, and fully local project/video importing.
 
@@ -27,6 +27,14 @@ pip install -r services/api/requirements-ai.txt
 ```
 
 The selected Whisper model downloads once on first use and is cached by the worker afterward. NVIDIA CUDA is selected automatically when the installed CTranslate2 runtime supports it; CPU is always available.
+
+## Included in Phase 4
+
+- Turn timestamped transcripts into candidate short clips in a configurable duration range.
+- Score hooks, questions, contrast/punchline language, speaking rate, silence ratio, and real FFmpeg audio energy.
+- Rank suggestions from 0–100 with a visible explanation and metrics for every pick.
+- Remove duplicate text and heavily overlapping clips before saving the top recommendations.
+- Run analysis in the background with genuine progress, cancellation, retries, and SQLite persistence.
 
 ## Quick start
 

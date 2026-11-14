@@ -54,6 +54,22 @@ class Transcript(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
 
 
+class ClipSuggestion(Base):
+    __tablename__ = "clip_suggestions"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    project_id: Mapped[int] = mapped_column(ForeignKey("projects.id"), nullable=False, index=True)
+    asset_id: Mapped[int] = mapped_column(ForeignKey("media_assets.id"), nullable=False, index=True)
+    analysis_job_id: Mapped[int] = mapped_column(ForeignKey("processing_jobs.id"), nullable=False, index=True)
+    start_seconds: Mapped[float] = mapped_column(Float, nullable=False)
+    end_seconds: Mapped[float] = mapped_column(Float, nullable=False)
+    score: Mapped[int] = mapped_column(Integer, nullable=False)
+    transcript_text: Mapped[str] = mapped_column(Text, nullable=False)
+    title: Mapped[str] = mapped_column(String(160), nullable=False)
+    reasons_json: Mapped[list] = mapped_column(JSON, nullable=False)
+    metrics_json: Mapped[dict] = mapped_column(JSON, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+
+
 class AppSetting(Base):
     __tablename__ = "app_settings"
     key: Mapped[str] = mapped_column(String(128), primary_key=True)

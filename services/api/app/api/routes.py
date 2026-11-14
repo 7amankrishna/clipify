@@ -9,10 +9,12 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.core.media_tools import MediaProbeError, media_tools_status, probe_video
 from app.db.session import get_db
-from app.models import MediaAsset, ProcessingJob, Project, Transcript
+from app.models import ClipSuggestion, MediaAsset, ProcessingJob, Project, Transcript
+from app.schemas.clips import ClipAnalysisCreate, ClipSuggestionResponse
 from app.schemas.projects import DashboardResponse, ProjectCreate, ProjectResponse, ProjectUpdate
 from app.schemas.transcription import JobResponse, TranscriptResponse, TranscriptionCreate
 from app.services.transcription import request_cancel, serialize_job, serialize_transcript, submit
+from app.services.clip_detection import serialize_suggestion, submit as submit_clip_analysis
 
 router = APIRouter()
 ALLOWED_VIDEO_EXTENSIONS = {".mp4", ".mov", ".mkv", ".webm"}
@@ -118,6 +120,7 @@ def update_project(project_id: int, payload: ProjectUpdate, database: Session = 
 @router.delete("/projects/{project_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_project(project_id: int, database: Session = Depends(get_db)) -> None:
     project = project_or_404(project_id, database)
+    database.query(ClipSuggestion).filter(ClipSuggestion.project_id == project_id).delete()
     database.query(Transcript).filter(Transcript.project_id == project_id).delete()
     database.query(ProcessingJob).filter(ProcessingJob.project_id == project_id).delete()
     database.query(MediaAsset).filter(MediaAsset.project_id == project_id).delete()
@@ -203,6 +206,35 @@ def list_transcripts(project_id: int, database: Session = Depends(get_db)) -> li
     return [serialize_transcript(transcript) for transcript in transcripts]
 
 
+@router.post("/projects/{project_id}/clip-analysis", response_model=JobResponse, status_code=status.HTTP_202_ACCEPTED)
+def start_clip_analysis(project_id: int, payload: ClipAnalysisCreate, database: Session = Depends(get_db)) -> dict:
+    project_or_404(project_id, database)
+    if payload.min_duration_seconds >= payload.max_duration_seconds:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Maximum clip duration must be greater than minimum duration.")
+    asset = database.get(MediaAsset, payload.asset_id)
+    transcript = database.scalar(select(Transcript).where(Transcript.asset_id == payload.asset_id).order_by(Transcript.created_at.desc()))
+    if not asset or asset.project_id != project_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Source video not found in this project.")
+    if not transcript:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Generate a transcript before analyzing clips.")
+    job = ProcessingJob(project_id=project_id, job_type="clip_analysis", status="queued", progress=0, metadata_json={"asset_id": asset.id, "min_duration_seconds": payload.min_duration_seconds, "max_duration_seconds": payload.max_duration_seconds, "attempt": 1, "cancel_requested": False})
+    database.add(job)
+    database.commit()
+    database.refresh(job)
+    submit_clip_analysis(job.id)
+    return serialize_job(job)
+
+
+@router.get("/projects/{project_id}/suggestions", response_model=list[ClipSuggestionResponse])
+def list_suggestions(project_id: int, asset_id: int | None = None, database: Session = Depends(get_db)) -> list[dict]:
+    project_or_404(project_id, database)
+    query = select(ClipSuggestion).where(ClipSuggestion.project_id == project_id)
+    if asset_id is not None:
+        query = query.where(ClipSuggestion.asset_id == asset_id)
+    suggestions = list(database.scalars(query.order_by(ClipSuggestion.score.desc(), ClipSuggestion.created_at.desc())))
+    return [serialize_suggestion(suggestion) for suggestion in suggestions]
+
+
 @router.get("/jobs/{job_id}", response_model=JobResponse)
 def get_job(job_id: int, database: Session = Depends(get_db)) -> dict:
     job = database.get(ProcessingJob, job_id)
@@ -228,8 +260,8 @@ def retry_job(job_id: int, database: Session = Depends(get_db)) -> dict:
     job = database.get(ProcessingJob, job_id)
     if not job:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found.")
-    if job.job_type != "transcription" or job.status not in {"failed", "cancelled"}:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Only failed or cancelled transcription jobs can be retried.")
+    if job.job_type not in {"transcription", "clip_analysis"} or job.status not in {"failed", "cancelled"}:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Only failed or cancelled processing jobs can be retried.")
     metadata = dict(job.metadata_json or {})
     metadata["attempt"] = int(metadata.get("attempt", 0)) + 1
     metadata["cancel_requested"] = False
@@ -239,5 +271,8 @@ def retry_job(job_id: int, database: Session = Depends(get_db)) -> dict:
     job.error_message = None
     database.commit()
     database.refresh(job)
-    submit(job.id)
+    if job.job_type == "transcription":
+        submit(job.id)
+    else:
+        submit_clip_analysis(job.id)
     return serialize_job(job)

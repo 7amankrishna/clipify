@@ -57,6 +57,21 @@ export type Transcript = {
   created_at: string;
 };
 
+export type ClipSuggestion = {
+  id: number;
+  project_id: number;
+  asset_id: number;
+  analysis_job_id: number;
+  start_seconds: number;
+  end_seconds: number;
+  score: number;
+  transcript_text: string;
+  title: string;
+  reasons: string[];
+  metrics: Record<string, number | string | null>;
+  created_at: string;
+};
+
 const API_BASE = import.meta.env.VITE_API_URL ?? "http://127.0.0.1:8000/api/v1";
 
 export async function getHealth(): Promise<HealthResponse> {
@@ -91,4 +106,6 @@ export const projectApi = {
   job: (jobId: number) => request<TranscriptionJob>(`/jobs/${jobId}`),
   cancelJob: (jobId: number) => request<TranscriptionJob>(`/jobs/${jobId}/cancel`, { method: "POST" }),
   retryJob: (jobId: number) => request<TranscriptionJob>(`/jobs/${jobId}/retry`, { method: "POST" }),
+  startClipAnalysis: (projectId: number, assetId: number) => request<TranscriptionJob>(`/projects/${projectId}/clip-analysis`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ asset_id: assetId, min_duration_seconds: 15, max_duration_seconds: 60 }) }),
+  suggestions: (projectId: number, assetId?: number) => request<ClipSuggestion[]>(`/projects/${projectId}/suggestions${assetId ? `?asset_id=${assetId}` : ""}`),
 };

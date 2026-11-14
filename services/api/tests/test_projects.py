@@ -4,6 +4,8 @@ from types import SimpleNamespace
 from fastapi.testclient import TestClient
 from app.main import app
 from app.core.media_tools import probe_video
+from app.db.session import SessionLocal
+from app.models import ProcessingJob, Transcript
 
 
 def test_create_import_reopen_and_delete_project(monkeypatch):
@@ -88,3 +90,36 @@ def test_worker_persists_word_timestamped_transcript(monkeypatch):
         assert completed["status"] == "completed"
         assert completed["progress"] == 100
         assert transcript["segments"][0]["words"][1]["word"] == "world"
+
+
+def test_clip_analysis_ranks_and_persists_non_overlapping_suggestions(monkeypatch):
+    monkeypatch.setattr("app.api.routes.probe_video", lambda _: {"duration_seconds": 40.0, "width": 1920, "height": 1080, "fps": 30.0})
+    monkeypatch.setattr("app.api.routes.submit_clip_analysis", lambda _: None)
+    sample_text = "How do you avoid this common mistake? Here is the simple powerful answer that changes everything for creators."
+    segments = [{"start": index * 8.0, "end": (index + 1) * 8.0, "text": sample_text, "words": []} for index in range(5)]
+    with TestClient(app) as client:
+        project_id = client.post("/api/v1/projects", json={"name": "Clip analysis"}).json()["id"]
+        asset = client.post(f"/api/v1/projects/{project_id}/media", files={"file": ("source.mp4", b"source", "video/mp4")}).json()["assets"][0]
+        database = SessionLocal()
+        transcription_job = ProcessingJob(project_id=project_id, job_type="transcription", status="completed", progress=100, metadata_json={})
+        database.add(transcription_job)
+        database.commit()
+        database.refresh(transcription_job)
+        database.add(Transcript(project_id=project_id, asset_id=asset["id"], job_id=transcription_job.id, language="en", language_probability=0.99, segments_json=segments, transcript_path="/tmp/test-transcript.json"))
+        database.commit()
+        database.close()
+        analysis = client.post(f"/api/v1/projects/{project_id}/clip-analysis", json={"asset_id": asset["id"], "min_duration_seconds": 8, "max_duration_seconds": 24})
+        assert analysis.status_code == 202
+        analysis_job_id = analysis.json()["id"]
+
+        monkeypatch.setattr("app.services.clip_detection.audio_profile", lambda _path, candidates: ([], {index: -12.0 for index in range(len(candidates))}))
+        from app.services.clip_detection import run_analysis
+        run_analysis(analysis_job_id)
+
+        completed = client.get(f"/api/v1/jobs/{analysis_job_id}").json()
+        suggestions = client.get(f"/api/v1/projects/{project_id}/suggestions?asset_id={asset['id']}").json()
+        assert completed["status"] == "completed"
+        assert suggestions[0]["score"] > 50
+        assert suggestions[0]["reasons"]
+        for earlier, later in zip(suggestions, suggestions[1:]):
+            assert min(earlier["end_seconds"], later["end_seconds"]) - max(earlier["start_seconds"], later["start_seconds"]) < min(earlier["end_seconds"] - earlier["start_seconds"], later["end_seconds"] - later["start_seconds"]) * 0.56
