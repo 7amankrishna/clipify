@@ -1,6 +1,6 @@
 # ClipForge Local
 
-Local-first desktop software for turning long-form video into short clips. This repository currently contains **Phase 1–2: local foundation and project/video import management**.
+Local-first desktop software for turning long-form video into short clips. This repository currently contains **Phases 1–3: foundation, project/video import, and local transcription**.
 
 It ships a React/Vite/TypeScript desktop UI, a FastAPI + SQLite service, FFmpeg/FFprobe detection, Docker support for the API, a Tauri v2 shell configuration, and fully local project/video importing.
 
@@ -11,6 +11,22 @@ It ships a React/Vite/TypeScript desktop UI, a FastAPI + SQLite service, FFmpeg/
 - Inspect duration, resolution, frame rate, and size with FFprobe.
 - Persist projects and media metadata in SQLite; store source videos under `data/projects/`.
 - View recent projects and local storage usage from the dashboard.
+
+## Included in Phase 3
+
+- Queue background transcription jobs with actual persisted progress, cancellation, and retry states.
+- Extract mono 16 kHz audio with FFmpeg.
+- Transcribe locally with faster-whisper, word-level timestamps, English/Hindi/Hinglish support, and automatic language detection.
+- Use faster-whisper's Silero VAD filter to remove non-speech gaps.
+- Save transcript records in SQLite and readable JSON files under `data/projects/<id>/transcripts/`.
+
+Install the optional local AI runtime before generating transcripts:
+
+```powershell
+pip install -r services/api/requirements-ai.txt
+```
+
+The selected Whisper model downloads once on first use and is cached by the worker afterward. NVIDIA CUDA is selected automatically when the installed CTranslate2 runtime supports it; CPU is always available.
 
 ## Quick start
 

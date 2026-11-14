@@ -34,6 +34,29 @@ export type Dashboard = {
   recent_projects: Project[];
 };
 
+export type TranscriptionJob = {
+  id: number;
+  project_id: number | null;
+  job_type: string;
+  status: string;
+  progress: number;
+  error_message: string | null;
+  metadata_json: Record<string, unknown> | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type Transcript = {
+  id: number;
+  project_id: number;
+  asset_id: number;
+  job_id: number;
+  language: string | null;
+  language_probability: number | null;
+  segments: Array<{ start: number; end: number; text: string; words: Array<{ word: string; start: number; end: number; probability: number | null }> }>;
+  created_at: string;
+};
+
 const API_BASE = import.meta.env.VITE_API_URL ?? "http://127.0.0.1:8000/api/v1";
 
 export async function getHealth(): Promise<HealthResponse> {
@@ -63,4 +86,9 @@ export const projectApi = {
     form.append("file", file);
     return request<Project>(`/projects/${id}/media`, { method: "POST", body: form });
   },
+  startTranscript: (projectId: number, assetId: number) => request<TranscriptionJob>(`/projects/${projectId}/transcriptions`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ asset_id: assetId, model: "base", language: "auto", device: "auto" }) }),
+  transcripts: (projectId: number) => request<Transcript[]>(`/projects/${projectId}/transcripts`),
+  job: (jobId: number) => request<TranscriptionJob>(`/jobs/${jobId}`),
+  cancelJob: (jobId: number) => request<TranscriptionJob>(`/jobs/${jobId}/cancel`, { method: "POST" }),
+  retryJob: (jobId: number) => request<TranscriptionJob>(`/jobs/${jobId}/retry`, { method: "POST" }),
 };

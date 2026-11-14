@@ -41,6 +41,19 @@ class ProcessingJob(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
 
+class Transcript(Base):
+    __tablename__ = "transcripts"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    project_id: Mapped[int] = mapped_column(ForeignKey("projects.id"), nullable=False, index=True)
+    asset_id: Mapped[int] = mapped_column(ForeignKey("media_assets.id"), nullable=False, index=True)
+    job_id: Mapped[int] = mapped_column(ForeignKey("processing_jobs.id"), nullable=False, unique=True)
+    language: Mapped[str | None] = mapped_column(String(32))
+    language_probability: Mapped[float | None] = mapped_column(Float)
+    segments_json: Mapped[list] = mapped_column(JSON, nullable=False)
+    transcript_path: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+
+
 class AppSetting(Base):
     __tablename__ = "app_settings"
     key: Mapped[str] = mapped_column(String(128), primary_key=True)
