@@ -92,6 +92,8 @@ export type Waveform = { asset_id: number; duration_seconds: number | null; peak
 export type CaptionWord = { word: string; start: number; end: number; line: number };
 export type CaptionTrack = { id: number; clip_edit_id: number; preset: "bold_yellow" | "white_minimal" | "neon_creator"; words: CaptionWord[]; updated_at: string };
 export type VideoExport = { id: number; project_id: number; clip_edit_id: number; job_id: number; is_preview: boolean; status: string; output_path: string | null; error_message: string | null; created_at: string; updated_at: string };
+export type AppSettings = { ai_provider: "fallback" | "ollama" | "gemini"; ollama_url: string; ollama_model: string; gemini_model: string; has_gemini_api_key: boolean; whisper_model: string; processing_device: string; theme: string; storage_dir: string; ffmpeg_path: string | null };
+export type ClipMetadata = { id: number; project_id: number; suggestion_id: number; provider: string; title: string; hook: string; description: string; hashtags: string[]; explanation: string; generation_note: string | null; created_at: string; updated_at: string };
 
 const API_BASE = import.meta.env.VITE_API_URL ?? "http://127.0.0.1:8000/api/v1";
 
@@ -139,4 +141,9 @@ export const projectApi = {
   exports: (projectId: number) => request<VideoExport[]>(`/projects/${projectId}/exports`),
   downloadExportUrl: (exportId: number) => `${API_BASE}/exports/${exportId}/download`,
   openExport: (exportId: number) => request<{ path: string }>(`/exports/${exportId}/open`, { method: "POST" }),
+  settings: () => request<AppSettings>("/settings"),
+  updateSettings: (patch: Partial<AppSettings> & { gemini_api_key?: string; clear_gemini_api_key?: boolean }) => request<AppSettings>("/settings", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(patch) }),
+  metadata: (projectId: number) => request<ClipMetadata[]>(`/projects/${projectId}/metadata`),
+  generateMetadata: (suggestionId: number, provider?: AppSettings["ai_provider"]) => request<ClipMetadata>(`/suggestions/${suggestionId}/metadata`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(provider ? { provider } : {}) }),
+  updateMetadata: (metadataId: number, patch: Partial<Pick<ClipMetadata, "title" | "hook" | "description" | "hashtags" | "explanation">>) => request<ClipMetadata>(`/metadata/${metadataId}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(patch) }),
 };

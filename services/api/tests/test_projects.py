@@ -170,3 +170,22 @@ def test_caption_tracks_and_export_jobs_are_persisted(monkeypatch):
         assert queued.status_code == 202
         assert queued.json()["status"] == "queued"
         assert client.get(f"/api/v1/projects/{project_id}/exports").json()[0]["job_id"] == queued.json()["job_id"]
+
+
+def test_local_metadata_fallback_and_settings_do_not_return_gemini_key(monkeypatch):
+    monkeypatch.setattr("app.api.routes.probe_video", lambda _: {"duration_seconds": 40.0, "width": 1920, "height": 1080, "fps": 30.0})
+    with TestClient(app) as client:
+        project_id = client.post("/api/v1/projects", json={"name": "Metadata fallback"}).json()["id"]
+        asset = client.post(f"/api/v1/projects/{project_id}/media", files={"file": ("source.mp4", b"source", "video/mp4")}).json()["assets"][0]
+        database = SessionLocal(); job = ProcessingJob(project_id=project_id, job_type="clip_analysis", status="completed", progress=100, metadata_json={}); database.add(job); database.commit(); database.refresh(job)
+        suggestion = ClipSuggestion(project_id=project_id, asset_id=asset["id"], analysis_job_id=job.id, start_seconds=1.0, end_seconds=15.0, score=88, transcript_text="How to make better creator videos in less time.", title="Make better creator videos", reasons_json=["Question hook", "High speaking pace"], metrics_json={})
+        database.add(suggestion); database.commit(); database.refresh(suggestion); suggestion_id = suggestion.id; database.close()
+        saved_settings = client.patch("/api/v1/settings", json={"ai_provider": "gemini", "gemini_api_key": "test-secret-key-12345", "gemini_model": "gemini-2.0-flash"})
+        assert saved_settings.status_code == 200
+        assert saved_settings.json()["has_gemini_api_key"] is True
+        assert "gemini_api_key" not in saved_settings.json()
+        metadata = client.post(f"/api/v1/suggestions/{suggestion_id}/metadata", json={"provider": "fallback"})
+        assert metadata.status_code == 200
+        assert metadata.json()["provider"] == "fallback"
+        assert metadata.json()["hashtags"]
+        assert client.get(f"/api/v1/projects/{project_id}/metadata").json()[0]["title"] == "Make better creator videos"

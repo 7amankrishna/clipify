@@ -1,6 +1,6 @@
 # ClipForge Local
 
-Local-first desktop software for turning long-form video into short clips. This repository currently contains **Phases 1–6: foundation, import, transcription, smart clip detection, visual editing, animated captions, and exports**.
+Local-first desktop software for turning long-form video into short clips. This repository currently contains **Phases 1–7: foundation, import, transcription, smart clip detection, visual editing, captioned exports, and optional AI metadata**.
 
 It ships a React/Vite/TypeScript desktop UI, a FastAPI + SQLite service, FFmpeg/FFprobe detection, Docker support for the API, a Tauri v2 shell configuration, and fully local project/video importing.
 
@@ -53,6 +53,14 @@ The selected Whisper model downloads once on first use and is cached by the work
 - Render low-resolution previews or H.264/AAC MP4 exports through a real local FFmpeg pipeline.
 - Apply the selected ratio and crop mode during export; default vertical exports are 1080 × 1920.
 - Track real render progress, cancellation, failures, and retries; download completed files from the workspace.
+
+## Included in Phase 7
+
+- Generate and edit hooks, titles, descriptions, explanations, and hashtags for suggested clips.
+- Use a deterministic local fallback without an LLM, or opt into local Ollama or Gemini metadata generation.
+- Configure provider, model, Whisper preferences, GPU/CPU mode, and theme from the local Settings panel.
+- Store settings and generated metadata in SQLite. Gemini keys are write-only in the API and are never returned to the desktop UI.
+- Send only the selected clip transcript to Gemini when you explicitly generate metadata; source video and normal processing remain local.
 
 ## Quick start
 

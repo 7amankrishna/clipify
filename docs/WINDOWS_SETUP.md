@@ -1,4 +1,4 @@
-# Windows setup (Phases 1–6)
+# Windows setup (Phases 1–7)
 
 ## Prerequisites
 
@@ -49,6 +49,14 @@ Use **Generate transcript** beneath an imported video to queue local transcripti
 After a transcript is complete, use **Find smart clips**. ClipForge scores candidate moments locally using the transcript, pause detection, speaking pace, and measured audio energy; each recommendation shows the reasons behind its score.
 
 Open a smart suggestion in the **Clip Workspace** to adjust its start/end time on a real decoded waveform, preview its crop, and select the target ratio. Use the animated-caption editor to revise caption lines and select a preset. **Render preview** creates a smaller local MP4; **Export MP4** produces a H.264/AAC file (1080 × 1920 by default for 9:16) in `data/projects/<id>/exports/`. Progress, cancellation, retry, and completed downloads appear in the workspace.
+
+## Optional AI metadata
+
+The Settings panel offers three metadata modes:
+
+- **Local fallback** needs no model or key and generates usable titles, hooks, descriptions, and hashtags from the saved transcript.
+- **Ollama** stays on your computer. Install and start Ollama, pull a model such as `ollama pull llama3.2`, then select Ollama and save the local URL/model.
+- **Gemini** needs an API key from Google AI Studio. Select Gemini, paste the key once, choose a model, and save. The key is not returned to the UI. Gemini receives only the selected clip's transcript when you press Generate metadata; it never receives the original video.
 
 ## Verification
 

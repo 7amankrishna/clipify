@@ -11,16 +11,18 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.core.media_tools import MediaProbeError, media_tools_status, probe_video
 from app.db.session import get_db
-from app.models import CaptionTrack, ClipEdit, ClipSuggestion, MediaAsset, ProcessingJob, Project, Transcript, VideoExport
+from app.models import AppSetting, CaptionTrack, ClipEdit, ClipMetadata, ClipSuggestion, MediaAsset, ProcessingJob, Project, Transcript, VideoExport
 from app.schemas.clips import ClipAnalysisCreate, ClipSuggestionResponse
 from app.schemas.editor import ClipEditCreate, ClipEditResponse, ClipEditUpdate, WaveformResponse
 from app.schemas.export import CaptionResponse, CaptionUpdate, ExportCreate, ExportResponse
+from app.schemas.ai import ClipMetadataResponse, ClipMetadataUpdate, MetadataGenerate, SettingsResponse, SettingsUpdate
 from app.schemas.projects import DashboardResponse, ProjectCreate, ProjectResponse, ProjectUpdate
 from app.schemas.transcription import JobResponse, TranscriptResponse, TranscriptionCreate
 from app.services.transcription import request_cancel, serialize_job, serialize_transcript, submit
 from app.services.clip_detection import serialize_suggestion, submit as submit_clip_analysis
 from app.services.media_workspace import WaveformError, waveform_peaks
 from app.services.rendering import serialize_caption, serialize_export, submit as submit_render
+from app.services.ai_metadata import generate_metadata, read_setting, serialize_metadata, settings_payload, write_setting
 
 router = APIRouter()
 ALLOWED_VIDEO_EXTENSIONS = {".mp4", ".mov", ".mkv", ".webm"}
@@ -134,6 +136,24 @@ def dashboard(database: Session = Depends(get_db)) -> dict:
     }
 
 
+@router.get("/settings", response_model=SettingsResponse)
+def get_settings(database: Session = Depends(get_db)) -> dict:
+    return settings_payload(database)
+
+
+@router.patch("/settings", response_model=SettingsResponse)
+def update_settings(payload: SettingsUpdate, database: Session = Depends(get_db)) -> dict:
+    values = payload.model_dump(exclude_none=True, exclude={"clear_gemini_api_key"})
+    for key, value in values.items():
+        if key == "ollama_url" and not value.startswith(("http://127.0.0.1", "http://localhost")):
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Ollama must use a localhost URL.")
+        write_setting(database, key, str(value))
+    if payload.clear_gemini_api_key:
+        write_setting(database, "gemini_api_key", "")
+    database.commit()
+    return settings_payload(database)
+
+
 @router.post("/projects", response_model=ProjectResponse, status_code=status.HTTP_201_CREATED)
 def create_project(payload: ProjectCreate, database: Session = Depends(get_db)) -> dict:
     name = payload.name.strip()
@@ -171,6 +191,7 @@ def delete_project(project_id: int, database: Session = Depends(get_db)) -> None
     project = project_or_404(project_id, database)
     edit_ids = select(ClipEdit.id).where(ClipEdit.project_id == project_id)
     database.query(VideoExport).filter(VideoExport.project_id == project_id).delete()
+    database.query(ClipMetadata).filter(ClipMetadata.project_id == project_id).delete()
     database.query(CaptionTrack).filter(CaptionTrack.clip_edit_id.in_(edit_ids)).delete(synchronize_session=False)
     database.query(ClipEdit).filter(ClipEdit.project_id == project_id).delete()
     database.query(ClipSuggestion).filter(ClipSuggestion.project_id == project_id).delete()
@@ -286,6 +307,32 @@ def list_suggestions(project_id: int, asset_id: int | None = None, database: Ses
         query = query.where(ClipSuggestion.asset_id == asset_id)
     suggestions = list(database.scalars(query.order_by(ClipSuggestion.score.desc(), ClipSuggestion.created_at.desc())))
     return [serialize_suggestion(suggestion) for suggestion in suggestions]
+
+
+@router.get("/projects/{project_id}/metadata", response_model=list[ClipMetadataResponse])
+def list_metadata(project_id: int, database: Session = Depends(get_db)) -> list[dict]:
+    project_or_404(project_id, database)
+    items = list(database.scalars(select(ClipMetadata).where(ClipMetadata.project_id == project_id).order_by(ClipMetadata.updated_at.desc())))
+    return [serialize_metadata(item) for item in items]
+
+
+@router.post("/suggestions/{suggestion_id}/metadata", response_model=ClipMetadataResponse)
+def create_metadata(suggestion_id: int, payload: MetadataGenerate, database: Session = Depends(get_db)) -> dict:
+    suggestion = database.get(ClipSuggestion, suggestion_id)
+    if not suggestion:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Clip suggestion not found.")
+    return serialize_metadata(generate_metadata(database, suggestion, payload.provider))
+
+
+@router.patch("/metadata/{metadata_id}", response_model=ClipMetadataResponse)
+def update_metadata(metadata_id: int, payload: ClipMetadataUpdate, database: Session = Depends(get_db)) -> dict:
+    item = database.get(ClipMetadata, metadata_id)
+    if not item:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Generated metadata not found.")
+    for field, value in payload.model_dump(exclude_none=True).items():
+        setattr(item, "hashtags_json" if field == "hashtags" else field, value)
+    database.commit(); database.refresh(item)
+    return serialize_metadata(item)
 
 
 @router.get("/media/{asset_id}/stream")
