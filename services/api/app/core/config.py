@@ -11,6 +11,7 @@ class Settings(BaseSettings):
     port: int = 8000
     database_url: str = "sqlite:///./data/clipforge.db"
     storage_dir: Path = Path("./data")
+    max_upload_size_mb: int = 10_240
     ffmpeg_path: str | None = None
     ffprobe_path: str | None = None
     cors_origins: str = "http://localhost:5173,tauri://localhost,http://tauri.localhost"

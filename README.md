@@ -1,8 +1,16 @@
 # ClipForge Local
 
-Local-first desktop software for turning long-form video into short clips. This repository currently contains **Phase 1: Project Foundation & Local Environment**.
+Local-first desktop software for turning long-form video into short clips. This repository currently contains **Phase 1–2: local foundation and project/video import management**.
 
-It ships a React/Vite/TypeScript desktop UI, a FastAPI + SQLite service, FFmpeg/FFprobe health detection, Docker support for the API, and a Tauri v2 shell configuration.
+It ships a React/Vite/TypeScript desktop UI, a FastAPI + SQLite service, FFmpeg/FFprobe detection, Docker support for the API, a Tauri v2 shell configuration, and fully local project/video importing.
+
+## Included in Phase 2
+
+- Create, rename, open, and delete video projects.
+- Import MP4, MOV, MKV, and WebM source videos.
+- Inspect duration, resolution, frame rate, and size with FFprobe.
+- Persist projects and media metadata in SQLite; store source videos under `data/projects/`.
+- View recent projects and local storage usage from the dashboard.
 
 ## Quick start
 
